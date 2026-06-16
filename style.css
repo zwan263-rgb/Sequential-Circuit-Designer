@@ -4,6 +4,19 @@ body {
     background: #f4f6fb;
 }
 
+.student-info {
+    position: fixed;
+    top: 8px;
+    left: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #444;
+}
+
+h1 {
+    margin-top: 35px;
+}
+
 .main-container {
     display: flex;
     gap: 20px;
