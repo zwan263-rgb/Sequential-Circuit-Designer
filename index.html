@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>Sequential Circuit Design Automation System</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <h1>Sequential Circuit Design Automation System</h1>
+
+    <h3>Model Type</h3>
+
+    <label>
+        <input type="radio" name="model" checked>
+        Mealy Model
+    </label>
+
+    <br>
+
+    <label>
+        <input type="radio" name="model">
+        Moore Model
+    </label>
+
+    <br><br>
+
+    <h3>Flip-Flop Type</h3>
+
+    <select id="ffType">
+        <option>JK Flip-Flop</option>
+        <option>D Flip-Flop</option>
+        <option>T Flip-Flop</option>
+        <option>SR Flip-Flop</option>
+    </select>
+
+    <br><br>
+
+    <div class="main-container">
+
+        <div class="panel left-panel">
+
+            <h2>State Table</h2>
+
+            <table border="1" id="stateTable">
+                <tr>
+                    <th>Present State</th>
+                    <th>X</th>
+                    <th>Next State</th>
+                    <th>Z</th>
+                </tr>
+
+                <tr>
+                    <td><input value="A"></td>
+                    <td><input value="0"></td>
+                    <td><input value="A"></td>
+                    <td><input value="0"></td>
+                </tr>
+
+                <tr>
+                    <td><input value="A"></td>
+                    <td><input value="1"></td>
+                    <td><input value="B"></td>
+                    <td><input value="0"></td>
+                </tr>
+            </table>
+
+            <br>
+
+
+            <button onclick="addRow()">Add Row</button>
+
+            <br><br>
+
+            <button onclick="generate()">Generate</button>
+
+        </div>
+
+        <div class="panel middle-panel">
+            <h2>Output 1</h2>
+            <div id="equations">
+                Please click Generate.
+            </div>
+        </div>
+
+        <div class="panel right-panel">
+            <h2>Output 2</h2>
+            <div id="diagram">
+                Circuit Diagram Here
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+
+</body>
+</html>
