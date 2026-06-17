@@ -1,0 +1,68 @@
+body {
+    font-family: Arial;
+    margin: 20px;
+    background: #f4f6fb;
+}
+
+.student-info {
+    position: fixed;
+    top: 8px;
+    left: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #444;
+}
+
+h1 {
+    margin-top: 35px;
+}
+
+.main-container {
+    display: flex;
+    gap: 20px;
+}
+
+.panel {
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    padding: 15px;
+}
+
+.left-panel {
+    width: 30%;
+}
+
+.middle-panel {
+    width: 35%;
+}
+
+.right-panel {
+    width: 35%;
+}
+
+button {
+    padding: 10px;
+    margin-top: 10px;
+}
+
+table {
+    width: 100%;
+}
+
+    table input {
+        width: 95%;
+    }
+button {
+    padding: 10px 20px;
+    margin-top: 10px;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+    background: #4f6df5;
+    color: white;
+}
+
+    button:hover {
+        background: #3452dd;
+    }
