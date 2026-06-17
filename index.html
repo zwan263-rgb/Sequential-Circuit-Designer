@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sequential Circuit Design Automation System</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="control-panel" aria-label="Input and configuration">
+        <div class="brand-block">
+          <p class="eyebrow">Digital Logic Automation</p>
+          <h1>Sequential Circuit Design Automation System</h1>
+        </div>
+
+        <section class="panel-section" aria-labelledby="variables-title">
+          <div class="section-heading">
+            <span class="section-index">1</span>
+            <h2 id="variables-title">Variables</h2>
+          </div>
+          <div class="simulation-grid">
+            <label class="form-field">
+              <span>Input variables</span>
+              <input id="inputVariablesInput" type="text" value="X" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Output variables</span>
+              <input id="outputVariablesInput" type="text" value="Z" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section" aria-labelledby="model-type-title">
+          <div class="section-heading">
+            <span class="section-index">2</span>
+            <h2 id="model-type-title">Model Type</h2>
+          </div>
+          <div class="segmented-group" role="radiogroup" aria-label="Model Type">
+            <label class="radio-card">
+              <input type="radio" name="modelType" value="mealy" checked />
+              <span>Mealy Model</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="modelType" value="moore" />
+              <span>Moore Model</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section" aria-labelledby="ff-type-title">
+          <div class="section-heading">
+            <span class="section-index">3</span>
+            <h2 id="ff-type-title">Flip-Flop Type</h2>
+          </div>
+          <div class="segmented-group" role="radiogroup" aria-label="Flip-Flop Type">
+            <label class="radio-card">
+              <input type="radio" name="ffType" value="jk" checked />
+              <span>JK Flip-Flop</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="ffType" value="t" />
+              <span>T Flip-Flop</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="ffType" value="d" />
+              <span>D Flip-Flop</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="ffType" value="sr" />
+              <span>SR Flip-Flop</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section state-table-section" aria-labelledby="state-table-title">
+          <div class="section-heading">
+            <span class="section-index">4</span>
+            <h2 id="state-table-title">State Table Input</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="state-table">
+              <thead id="stateTableHead"></thead>
+              <tbody id="stateTableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="table-actions">
+            <button class="secondary-button" type="button" id="clearTableButton">Clear Table</button>
+            <button class="secondary-button" type="button" id="loadExampleButton">Load Example</button>
+          </div>
+        </section>
+
+        <section class="panel-section" aria-labelledby="text-description-title">
+          <div class="section-heading">
+            <span class="section-index">5</span>
+            <h2 id="text-description-title">Text Description</h2>
+          </div>
+          <label class="form-field">
+            <span>Description</span>
+            <textarea id="descriptionInput" rows="4" placeholder="Describe a sequential detector or load the example."></textarea>
+          </label>
+          <button class="secondary-button" type="button" id="parseDescriptionButton">Parse to State Table</button>
+        </section>
+
+        <section class="panel-section" aria-labelledby="simulation-title">
+          <div class="section-heading">
+            <span class="section-index">6</span>
+            <h2 id="simulation-title">Simulation Settings</h2>
+          </div>
+          <div class="simulation-grid">
+            <label class="form-field">
+              <span>Initial State</span>
+              <select id="initialStateSelect">
+                <option value="">Enter states first</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>Input Sequence</span>
+              <input id="xSequenceInput" type="text" value="0101" inputmode="numeric" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <div class="generate-area">
+          <button class="generate-button" type="button" id="generateButton">Generate</button>
+          <p id="statusText" class="status-text">Waiting for state table input.</p>
+        </div>
+      </aside>
+
+      <section class="results-panel" aria-label="Analysis and output">
+        <section class="analysis-panel" aria-labelledby="equation-title">
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">Analysis & Output</p>
+              <h2 id="equation-title">Equations & K-Map</h2>
+            </div>
+            <label class="equation-select">
+              <span>Target Input</span>
+              <select id="equationSelect" disabled>
+                <option>Generate first</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="equation-layout">
+            <div class="equation-list" id="equationList">
+              <div class="empty-state">
+                <strong>No equations yet</strong>
+                <span>Click Generate after completing the configuration.</span>
+              </div>
+            </div>
+
+            <div class="kmap-panel" id="kmapPanel">
+              <div class="empty-state">
+                <strong>K-map preview</strong>
+                <span>The selected flip-flop input will appear here.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="diagram-panel" aria-labelledby="diagram-title">
+          <div class="result-heading diagram-heading">
+            <div>
+              <p class="eyebrow">Core Output</p>
+              <h2 id="diagram-title">Sequential Circuit Diagram</h2>
+            </div>
+            <div class="diagram-toolbar" aria-label="Diagram controls">
+              <button class="icon-button" type="button" id="zoomOutButton" title="Zoom out">-</button>
+              <button class="icon-button" type="button" id="resetViewButton" title="Reset view">Reset</button>
+              <button class="icon-button" type="button" id="zoomInButton" title="Zoom in">+</button>
+            </div>
+          </div>
+
+          <div class="diagram-canvas" id="diagramCanvas">
+            <div class="diagram-empty" id="diagramEmpty">
+              <strong>Waiting for generated circuit</strong>
+              <span>Flip-flops, logic gates, clock, input, output, and wiring will be drawn here.</span>
+            </div>
+            <svg id="circuitSvg" class="circuit-svg" aria-label="Generated sequential circuit diagram"></svg>
+          </div>
+        </section>
+
+        <section class="output-panel" aria-labelledby="state-diagram-title">
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">State Behavior</p>
+              <h2 id="state-diagram-title">State Diagram</h2>
+            </div>
+          </div>
+          <div class="state-diagram-canvas" id="stateDiagramCanvas">
+            <div class="empty-state" id="stateDiagramEmpty">
+              <strong>Waiting for state diagram</strong>
+              <span>Generate from the state table to draw states and transitions.</span>
+            </div>
+            <svg id="stateDiagramSvg" class="state-diagram-svg" aria-label="Generated state diagram"></svg>
+          </div>
+        </section>
+
+        <section class="output-panel" aria-labelledby="timing-trace-title">
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">Simulation</p>
+              <h2 id="timing-trace-title">Timing Trace</h2>
+            </div>
+          </div>
+          <div class="trace-table-wrap">
+            <table class="trace-table">
+              <thead id="timingTraceHead"></thead>
+              <tbody id="timingTraceBody">
+                <tr>
+              <td class="trace-empty" colspan="9">Generate to simulate the selected input sequence.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="output-panel" aria-labelledby="timing-diagram-title">
+          <div class="result-heading">
+            <div>
+              <p class="eyebrow">Waveforms</p>
+              <h2 id="timing-diagram-title">Timing Diagram</h2>
+            </div>
+          </div>
+          <div class="timing-diagram-canvas" id="timingDiagramCanvas">
+            <div class="empty-state" id="timingDiagramEmpty">
+              <strong>Waiting for timing diagram</strong>
+              <span>CLK, inputs, Q bits, and outputs will be drawn from the timing trace.</span>
+            </div>
+            <svg id="timingDiagramSvg" class="timing-diagram-svg" aria-label="Generated timing diagram"></svg>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
