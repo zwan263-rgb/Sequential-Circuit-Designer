@@ -1744,7 +1744,7 @@ function buildCircuitGraph(analysis) {
   const signalRows = new Map();
   const tapCounts = new Map();
   const signalX1 = 140;
-  const signalX2 = 700;
+  const signalX2 = 650;
   const signalTop = 74;
   const signalSpacing = 42;
   const branchGap = 30;
@@ -1949,8 +1949,11 @@ function buildCircuitGraph(analysis) {
       }
 
       const andNode = addAndGate(`${equation.name}-and`, area.andX, networkY, term, addGateNode);
-      term.forEach((literal, index) => connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[index].offset)));
-      addWire(anchor(andNode, "right", 0), target.point, "gate-output");
+      const andKeepOutAccess = { allowKeepOutIds: [andNode.id] };
+      term.forEach((literal, index) =>
+        connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[index].offset), "branch", andKeepOutAccess),
+      );
+      addWire(anchor(andNode, "right", 0), target.point, "gate-output", null, andKeepOutAccess);
       return;
     }
 
@@ -1966,8 +1969,12 @@ function buildCircuitGraph(analysis) {
       } else {
         const termY = orInput.y;
         const andNode = addAndGate(`${equation.name}-and-${termIndex + 1}`, area.andX, termY, term, addGateNode);
-        term.forEach((literal, literalIndex) => connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[literalIndex].offset)));
-        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 34 - termIndex * 12, orKeepOutAccess);
+        const andKeepOutAccess = { allowKeepOutIds: [andNode.id] };
+        const andToOrKeepOutAccess = { allowKeepOutIds: [andNode.id, orNode.id] };
+        term.forEach((literal, literalIndex) =>
+          connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[literalIndex].offset), "branch", andKeepOutAccess),
+        );
+        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 34 - termIndex * 12, andToOrKeepOutAccess);
       }
     });
     addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, orKeepOutAccess);
@@ -2015,9 +2022,9 @@ function buildCircuitGraph(analysis) {
     addWire(anchor(ffNode, "right", 0), { x: row.x1, y: row.y }, "feedback", ffNode.x + ffNode.w + 70);
   });
 
-  const orKeepOutZones = nodes.filter((node) => node.type === "or").map(makeOrKeepOutZone);
+  const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or").map(makeGateKeepOutZone);
   const routedWires = wires
-    .map((wire, index) => sanitizeCircuitWire({ ...wire, points: routeWireAroundKeepOuts(wire, orKeepOutZones, index) }))
+    .map((wire, index) => sanitizeCircuitWire({ ...wire, points: routeWireAroundKeepOuts(wire, gateKeepOutZones, index) }))
     .filter(hasRenderableWirePath);
   const junctions = buildCircuitJunctions(routedWires, buses);
   const validation = validateCircuitGraphConnections(nodes, routedWires, buses, junctions);
@@ -2033,9 +2040,9 @@ function buildCircuitGraph(analysis) {
   return { nodes, wires: routedWires, buses, junctions, width, height, validation };
 }
 
-function makeOrKeepOutZone(node) {
-  const marginX = 26;
-  const marginY = 24;
+function makeGateKeepOutZone(node) {
+  const marginX = node.type === "and" ? 16 : 26;
+  const marginY = node.type === "and" ? 16 : 24;
   return {
     id: node.id,
     x: node.x - marginX,
@@ -2047,12 +2054,36 @@ function makeOrKeepOutZone(node) {
 
 function routeWireAroundKeepOuts(wire, keepOutZones, wireIndex) {
   const allowedIds = new Set(wire.allowKeepOutIds || []);
-  return keepOutZones.reduce((points, zone, zoneIndex) => {
-    if (allowedIds.has(zone.id) || !wireIntersectsKeepOut(points, zone)) {
-      return points;
-    }
-    return routeWireAroundZone(points, zone, wireIndex + zoneIndex, wire);
-  }, wire.points);
+  let points = wire.points;
+  let changed = true;
+  let pass = 0;
+  const maxPasses = Math.max(1, keepOutZones.length * 2);
+
+  while (changed && pass < maxPasses) {
+    changed = false;
+    keepOutZones.forEach((zone, zoneIndex) => {
+      if (allowedIds.has(zone.id) || !wireIntersectsKeepOut(points, zone)) {
+        return;
+      }
+      const routed = routeWireAroundZone(points, zone, wireIndex + zoneIndex + pass, wire);
+      if (!samePointList(points, routed)) {
+        points = routed;
+        changed = true;
+      }
+    });
+    pass += 1;
+  }
+
+  return points;
+}
+
+function samePointList(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((point, index) => pointsEqual(point, b[index]));
+}
+
+function wireIntersectsKeepOut(points, zone) {
+  return points.some((point, index) => index > 0 && segmentIntersectsRect(points[index - 1], point, zone));
 }
 
 function routeWireAroundZone(points, zone, wireIndex, wire = {}) {
@@ -2088,10 +2119,6 @@ function routeWireAroundZone(points, zone, wireIndex, wire = {}) {
     { x: afterX, y: end.y },
     end,
   ]);
-}
-
-function wireIntersectsKeepOut(points, zone) {
-  return points.some((point, index) => index > 0 && segmentIntersectsRect(points[index - 1], point, zone));
 }
 
 function segmentIntersectsRect(a, b, rect) {
