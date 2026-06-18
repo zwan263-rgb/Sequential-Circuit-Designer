@@ -775,6 +775,7 @@ h2 {
 .wire.clock {
   stroke: var(--amber);
   stroke-dasharray: 6 5;
+  stroke-linecap: butt;
 }
 
 .bus-label {

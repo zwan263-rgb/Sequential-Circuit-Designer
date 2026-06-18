@@ -1910,6 +1910,8 @@ function buildCircuitGraph(analysis) {
     return node;
   };
 
+  const keepOutAccess = (...ids) => ({ allowKeepOutIds: unique(ids.filter(Boolean)) });
+
   const ffEquationLayouts = layoutEquationGroups(
     ffEquations,
     (equation) => {
@@ -1931,9 +1933,10 @@ function buildCircuitGraph(analysis) {
     const parsed = parsedEquations.get(equation.name);
     if (!parsed) return;
     const networkY = area.centerY ?? target.point.y;
+    const targetAccessId = target.keepOutId || null;
 
     if (parsed.constant) {
-      connectSignalToPoint(parsed.constant, target.point, parsed.constant === "1" ? "constant" : "ground");
+      connectSignalToPoint(parsed.constant, target.point, parsed.constant === "1" ? "constant" : "ground", keepOutAccess(targetAccessId));
       return;
     }
 
@@ -1944,22 +1947,24 @@ function buildCircuitGraph(analysis) {
         return;
       }
       if (term.length === 1) {
-        connectSignalToPoint(term[0].signal, target.point);
+        connectSignalToPoint(term[0].signal, target.point, "branch", keepOutAccess(targetAccessId));
         return;
       }
 
       const andNode = addAndGate(`${equation.name}-and`, area.andX, networkY, term, addGateNode);
       const andKeepOutAccess = { allowKeepOutIds: [andNode.id] };
+      const andToTargetKeepOutAccess = keepOutAccess(andNode.id, targetAccessId);
       term.forEach((literal, index) =>
         connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[index].offset), "branch", andKeepOutAccess),
       );
-      addWire(anchor(andNode, "right", 0), target.point, "gate-output", null, andKeepOutAccess);
+      addWire(anchor(andNode, "right", 0), target.point, "gate-output", null, andToTargetKeepOutAccess);
       return;
     }
 
     const termPitch = area.termPitch || estimateEquationTermPitch(parsed);
     const orNode = addOrGate(`${equation.name}-or`, area.orX, networkY, parsed.terms, addGateNode, termPitch);
     const orKeepOutAccess = { allowKeepOutIds: [orNode.id] };
+    const orToTargetKeepOutAccess = keepOutAccess(orNode.id, targetAccessId);
     parsed.terms.forEach((term, termIndex) => {
       const orInput = anchor(orNode, "left", orNode.ports[termIndex].offset);
       if (term.length === 0) {
@@ -1977,7 +1982,7 @@ function buildCircuitGraph(analysis) {
         addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 34 - termIndex * 12, andToOrKeepOutAccess);
       }
     });
-    addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, orKeepOutAccess);
+    addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, orToTargetKeepOutAccess);
   };
 
   ffEquations.forEach((equation) => {
@@ -1985,6 +1990,7 @@ function buildCircuitGraph(analysis) {
     const ffNode = nodes.find((node) => node.id === `ff-Q${targetIndex}`);
     const target = {
       point: anchor(ffNode, "left", getNodePortOffset(nodes, ffNode.id, equation.name)),
+      keepOutId: ffNode.id,
     };
     const layout = ffEquationLayouts.get(equation.name);
     buildEquationNetwork(equation, target, { andX: 690, orX: 865, centerY: layout.centerY, termPitch: layout.termPitch });
@@ -1998,18 +2004,22 @@ function buildCircuitGraph(analysis) {
     buildEquationNetwork(equation, target, { andX: 1080, orX: 1245, centerY: layout.centerY, termPitch: layout.termPitch });
   });
 
-  const clockY = outputNode.y - 38;
-  buses.push({ signal: "CLK", label: "CLK", kind: "clock", x1: signalX1, x2: ffX + 96, y: clockY });
+  const clockBusX2 = ffX - 42;
+  const lastFfBottom = Math.max(...ffNodes.map((node) => node.y + node.h));
+  const clockY = lastFfBottom + 58;
+  buses.push({ signal: "CLK", label: "CLK", kind: "clock", x1: signalX1, x2: clockBusX2, y: clockY });
   ffNodes.forEach((node, index) => {
     const clockPoint = anchor(node, "bottom", 0);
-    const tapX = clockPoint.x + (index - (ffNodes.length - 1) / 2) * 42;
+    const tapX = ffX - 54 - index * 18;
+    const laneY = node.y + node.h + 24;
     wires.push({
       kind: "clock",
       branchPoint: { x: tapX, y: clockY },
+      ...keepOutAccess(node.id),
       points: [
         { x: tapX, y: clockY },
-        { x: tapX, y: clockPoint.y + 28 },
-        { x: clockPoint.x, y: clockPoint.y + 28 },
+        { x: tapX, y: laneY },
+        { x: clockPoint.x, y: laneY },
         clockPoint,
       ],
     });
@@ -2019,10 +2029,10 @@ function buildCircuitGraph(analysis) {
     const row = signalRows.get(qName);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
     if (!row || !ffNode) return;
-    addWire(anchor(ffNode, "right", 0), { x: row.x1, y: row.y }, "feedback", ffNode.x + ffNode.w + 70);
+    addWire(anchor(ffNode, "right", 0), { x: row.x1, y: row.y }, "feedback", ffNode.x + ffNode.w + 70, keepOutAccess(ffNode.id));
   });
 
-  const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or").map(makeGateKeepOutZone);
+  const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or" || node.type === "ff").map(makeGateKeepOutZone);
   const routedWires = wires
     .map((wire, index) => sanitizeCircuitWire({ ...wire, points: routeWireAroundKeepOuts(wire, gateKeepOutZones, index) }))
     .filter(hasRenderableWirePath);
@@ -2041,8 +2051,8 @@ function buildCircuitGraph(analysis) {
 }
 
 function makeGateKeepOutZone(node) {
-  const marginX = node.type === "and" ? 16 : 26;
-  const marginY = node.type === "and" ? 16 : 24;
+  const marginX = node.type === "ff" ? 12 : node.type === "and" ? 16 : 26;
+  const marginY = node.type === "ff" ? 12 : node.type === "and" ? 16 : 24;
   return {
     id: node.id,
     x: node.x - marginX,
