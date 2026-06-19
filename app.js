@@ -1746,8 +1746,11 @@ function buildCircuitGraph(analysis) {
   const signalX1 = 140;
   const signalX2 = 650;
   const signalTop = 74;
-  const signalSpacing = 42;
-  const branchGap = 30;
+  const busLaneGap = 48;
+  const verticalWireGap = 36;
+  const tapWrapOffset = 14;
+  const signalSpacing = busLaneGap;
+  const branchGap = verticalWireGap;
   const notX = signalX1 + 220;
   const notW = 44;
   const notH = 28;
@@ -1765,7 +1768,7 @@ function buildCircuitGraph(analysis) {
       x2: signalX2,
       y: signalTop + rowIndex * signalSpacing,
       labelX: x1 - labelGap,
-      branchStart: (kind === "inverted" ? x1 + 54 : Math.max(x1 + 84, notX + notW + 76)) + (rowIndex % 4) * 11,
+      branchStart: (kind === "inverted" ? x1 + 54 : Math.max(x1 + 84, notX + notW + 76)) + (rowIndex % 4) * (verticalWireGap / 2),
       branchGap,
       rowIndex,
     };
@@ -1855,7 +1858,7 @@ function buildCircuitGraph(analysis) {
     nodes.push(node);
     const inputPoint = anchor(node, "left", 0);
     const outputPoint = anchor(node, "right", 0);
-    const tapX = node.x - 52 - (baseRow.rowIndex % 3) * 10;
+    const tapX = node.x - 60 - (baseRow.rowIndex % 3) * (verticalWireGap / 2);
     wires.push({
       kind: "branch",
       branchPoint: { x: tapX, y: baseRow.y },
@@ -1875,9 +1878,10 @@ function buildCircuitGraph(analysis) {
     const row = signalRows.get(signal);
     if (!row) return;
     const count = tapCounts.get(signal) || 0;
-    const available = Math.max(1, Math.floor((row.x2 - row.branchStart - 18) / row.branchGap));
+    const tapMargin = Math.max(18, verticalWireGap / 2);
+    const available = Math.max(1, Math.floor((row.x2 - row.branchStart - tapMargin) / row.branchGap));
     const wrap = Math.floor(count / available);
-    const tapX = Math.min(row.x2 - 16, row.branchStart + (count % available) * row.branchGap + wrap * 6);
+    const tapX = Math.min(row.x2 - tapMargin, row.branchStart + (count % available) * row.branchGap + wrap * tapWrapOffset);
     tapCounts.set(signal, count + 1);
     wires.push({
       kind,
@@ -1892,7 +1896,7 @@ function buildCircuitGraph(analysis) {
   };
 
   const addWire = (start, end, kind = "branch", laneX = null, options = {}) => {
-    const midX = laneX ?? start.x + Math.max(36, (end.x - start.x) / 2);
+    const midX = laneX ?? start.x + Math.max(44, (end.x - start.x) / 2);
     wires.push({
       kind,
       ...options,
@@ -1979,7 +1983,7 @@ function buildCircuitGraph(analysis) {
         term.forEach((literal, literalIndex) =>
           connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[literalIndex].offset), "branch", andKeepOutAccess),
         );
-        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 34 - termIndex * 12, andToOrKeepOutAccess);
+        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 46 - termIndex * 18, andToOrKeepOutAccess);
       }
     });
     addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, orToTargetKeepOutAccess);
@@ -2006,12 +2010,12 @@ function buildCircuitGraph(analysis) {
 
   const clockBusX2 = ffX - 42;
   const lastFfBottom = Math.max(...ffNodes.map((node) => node.y + node.h));
-  const clockY = lastFfBottom + 58;
+  const clockY = lastFfBottom + 64;
   buses.push({ signal: "CLK", label: "CLK", kind: "clock", x1: signalX1, x2: clockBusX2, y: clockY });
   ffNodes.forEach((node, index) => {
     const clockPoint = anchor(node, "bottom", 0);
-    const tapX = ffX - 54 - index * 18;
-    const laneY = node.y + node.h + 24;
+    const tapX = ffX - 62 - index * 30;
+    const laneY = node.y + node.h + 30;
     wires.push({
       kind: "clock",
       branchPoint: { x: tapX, y: clockY },
@@ -2025,8 +2029,8 @@ function buildCircuitGraph(analysis) {
     });
   });
 
-  const feedbackLaneStart = ffX + ffW + 54;
-  const feedbackLaneGap = 38;
+  const feedbackLaneStart = ffX + ffW + 64;
+  const feedbackLaneGap = 48;
   qNames.forEach((qName, index) => {
     const row = signalRows.get(qName);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
@@ -2041,8 +2045,8 @@ function buildCircuitGraph(analysis) {
       return;
     }
 
-    const bottomLaneY = clockY + 28 + (index - 1) * 24;
-    const returnX = signalX1 - 24 - (index - 1) * 18;
+    const bottomLaneY = clockY + 36 + (index - 1) * 34;
+    const returnX = signalX1 - 34 - (index - 1) * 24;
     wires.push({
       kind: "feedback",
       ...feedbackAccess,
@@ -2340,32 +2344,32 @@ function parseProductTerm(term, signalNames) {
 }
 
 function estimateAndGateHeight(term) {
-  return Math.max(50, term.length * 18 + 22);
+  return Math.max(66, term.length * 26 + 24);
 }
 
 function estimateEquationTermPitch(parsed) {
-  const termHeights = parsed.terms.map((term) => (term.length > 1 ? estimateAndGateHeight(term) : 42));
-  const tallestTerm = termHeights.length ? Math.max(...termHeights) : 42;
-  return Math.max(82, tallestTerm + 36);
+  const termHeights = parsed.terms.map((term) => (term.length > 1 ? estimateAndGateHeight(term) : 50));
+  const tallestTerm = termHeights.length ? Math.max(...termHeights) : 50;
+  return Math.max(112, tallestTerm + 48);
 }
 
 function estimateEquationGroupHeight(parsed) {
   if (!parsed || parsed.constant || parsed.terms.length <= 1) {
     const term = parsed?.terms?.[0] || [];
-    return Math.max(78, term.length > 1 ? estimateAndGateHeight(term) + 32 : 78);
+    return Math.max(96, term.length > 1 ? estimateAndGateHeight(term) + 42 : 96);
   }
 
   const termPitch = estimateEquationTermPitch(parsed);
-  const termHeights = parsed.terms.map((term) => (term.length > 1 ? estimateAndGateHeight(term) : 42));
+  const termHeights = parsed.terms.map((term) => (term.length > 1 ? estimateAndGateHeight(term) : 50));
   const tallestTerm = Math.max(...termHeights);
   const termStackHeight = (parsed.terms.length - 1) * termPitch + tallestTerm;
   const orHeight = estimateOrGateHeight(parsed.terms.length, termPitch);
-  return Math.max(96, termStackHeight, orHeight);
+  return Math.max(112, termStackHeight, orHeight);
 }
 
 function layoutEquationGroups(equations, desiredCenterForEquation, parsedEquations, topY) {
   const layouts = new Map();
-  const groupGap = 82;
+  const groupGap = 104;
   let currentBottom = topY - groupGap;
 
   equations.forEach((equation) => {
@@ -2401,12 +2405,12 @@ function addAndGate(id, x, centerY, literals, addNode) {
   return addNode(node);
 }
 
-function estimateOrGateHeight(inputCount, inputSpacing = 76) {
+function estimateOrGateHeight(inputCount, inputSpacing = 88) {
   if (inputCount <= 1) return 64;
   return Math.max(64, (inputCount - 1) * inputSpacing + 56);
 }
 
-function addOrGate(id, x, centerY, terms, addNode, inputSpacing = 76) {
+function addOrGate(id, x, centerY, terms, addNode, inputSpacing = 88) {
   const h = estimateOrGateHeight(terms.length, inputSpacing);
   const node = {
     id,
@@ -2558,12 +2562,12 @@ function getNodePortOffset(nodes, nodeId, label) {
 }
 
 function logicBlockHeight(inputCount) {
-  const pinSpacing = 22;
+  const pinSpacing = 26;
   const minBlockHeight = 90;
   return Math.max(minBlockHeight, Math.max(inputCount, 1) * pinSpacing + 40);
 }
 
-function makeSidePorts(labels, side, nodeHeight, pinSpacing = 22) {
+function makeSidePorts(labels, side, nodeHeight, pinSpacing = 26) {
   const yValues = pinRows(nodeHeight, labels.length, pinSpacing);
   return labels.map((label, index) => ({
     side,
@@ -2572,7 +2576,7 @@ function makeSidePorts(labels, side, nodeHeight, pinSpacing = 22) {
   }));
 }
 
-function pinRows(nodeHeight, count, pinSpacing = 22) {
+function pinRows(nodeHeight, count, pinSpacing = 26) {
   if (count <= 0) return [];
   if (count === 1) return [nodeHeight / 2];
 
