@@ -1708,7 +1708,7 @@ function renderCircuitDiagram(analysis) {
   (graph.buses || []).forEach((bus) => drawCircuitBus(viewport, bus));
   (graph.wires || []).forEach((wire) => drawCircuitWire(viewport, wire));
   (graph.junctions || []).forEach((junction) => {
-    viewport.append(svgEl("circle", { class: "junction-dot", cx: junction.x, cy: junction.y, r: 2.7 }));
+    viewport.append(svgEl("circle", { class: "junction-dot", cx: junction.x, cy: junction.y, r: 2.7, "data-signal": junction.signal || "" }));
   });
   graph.nodes.forEach((node) => drawCircuitNode(viewport, node));
 
@@ -1743,6 +1743,7 @@ function buildCircuitGraph(analysis) {
   const buses = [];
   const signalRows = new Map();
   const tapCounts = new Map();
+  const wireLaneReservations = [];
   const signalX1 = 140;
   const signalX2 = 650;
   const signalTop = 74;
@@ -1756,6 +1757,46 @@ function buildCircuitGraph(analysis) {
   const notH = 28;
   const invertedSignalX1 = notX + notW + 68;
   let signalRowIndex = 0;
+
+  const reserveVerticalWireLane = (signal, preferredX, startY, endY, options = {}) => {
+    const laneGap = options.gap || 18;
+    const minX = options.minX ?? signalX1 + 54;
+    const maxX = options.maxX ?? signalX2 - Math.max(18, verticalWireGap / 2);
+    const minY = Math.min(startY, endY);
+    const maxY = Math.max(startY, endY);
+    const candidates = [];
+
+    for (let offset = 0; offset <= 8; offset += 1) {
+      if (offset === 0) {
+        candidates.push(preferredX);
+      } else {
+        candidates.push(preferredX + offset * laneGap);
+        candidates.push(preferredX - offset * laneGap);
+      }
+    }
+
+    const seenCandidates = new Set();
+    const normalizedCandidates = candidates
+      .map((candidate) => Math.max(minX, Math.min(maxX, candidate)))
+      .filter((candidate) => {
+        const key = Math.round(candidate * 10) / 10;
+        if (seenCandidates.has(key)) return false;
+        seenCandidates.add(key);
+        return true;
+      });
+
+    const laneConflicts = (candidate) =>
+      wireLaneReservations.some(
+        (reservation) =>
+          !sameCircuitSignal(reservation.signal, signal) &&
+          Math.abs(reservation.x - candidate) < laneGap &&
+          rangeOverlapLength(reservation.minY, reservation.maxY, minY, maxY) > 0.5,
+      );
+
+    const laneX = normalizedCandidates.find((candidate) => !laneConflicts(candidate)) ?? normalizedCandidates[0] ?? preferredX;
+    wireLaneReservations.push({ signal, x: laneX, minY, maxY });
+    return laneX;
+  };
 
   const addSignalRow = (signal, label, kind = "signal", x1 = signalX1) => {
     const rowIndex = signalRowIndex;
@@ -1858,9 +1899,16 @@ function buildCircuitGraph(analysis) {
     nodes.push(node);
     const inputPoint = anchor(node, "left", 0);
     const outputPoint = anchor(node, "right", 0);
-    const tapX = node.x - 60 - (baseRow.rowIndex % 3) * (verticalWireGap / 2);
+    const preferredTapX = node.x - 60 - (baseRow.rowIndex % 3) * (verticalWireGap / 2);
+    const tapX = reserveVerticalWireLane(baseRow.signal, preferredTapX, baseRow.y, inputPoint.y, {
+      minX: signalX1 + 54,
+      maxX: notX - 18,
+      gap: 18,
+    });
     wires.push({
       kind: "branch",
+      signal: baseRow.signal,
+      branchSignal: baseRow.signal,
       branchPoint: { x: tapX, y: baseRow.y },
       points: [
         { x: tapX, y: baseRow.y },
@@ -1870,6 +1918,7 @@ function buildCircuitGraph(analysis) {
     });
     wires.push({
       kind: "branch",
+      signal: row.signal,
       points: [outputPoint, { x: row.x1, y: row.y }],
     });
   });
@@ -1881,10 +1930,17 @@ function buildCircuitGraph(analysis) {
     const tapMargin = Math.max(18, verticalWireGap / 2);
     const available = Math.max(1, Math.floor((row.x2 - row.branchStart - tapMargin) / row.branchGap));
     const wrap = Math.floor(count / available);
-    const tapX = Math.min(row.x2 - tapMargin, row.branchStart + (count % available) * row.branchGap + wrap * tapWrapOffset);
+    const preferredTapX = Math.min(row.x2 - tapMargin, row.branchStart + (count % available) * row.branchGap + wrap * tapWrapOffset);
+    const tapX = reserveVerticalWireLane(signal, preferredTapX, row.y, end.y, {
+      minX: row.x1 + 54,
+      maxX: row.x2 - tapMargin,
+      gap: 18,
+    });
     tapCounts.set(signal, count + 1);
     wires.push({
       kind,
+      signal,
+      branchSignal: signal,
       branchPoint: { x: tapX, y: row.y },
       ...options,
       points: compactManhattanPoints([
@@ -1961,7 +2017,7 @@ function buildCircuitGraph(analysis) {
       term.forEach((literal, index) =>
         connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[index].offset), "branch", andKeepOutAccess),
       );
-      addWire(anchor(andNode, "right", 0), target.point, "gate-output", null, andToTargetKeepOutAccess);
+      addWire(anchor(andNode, "right", 0), target.point, "gate-output", null, { ...andToTargetKeepOutAccess, signal: equation.name });
       return;
     }
 
@@ -1983,10 +2039,13 @@ function buildCircuitGraph(analysis) {
         term.forEach((literal, literalIndex) =>
           connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[literalIndex].offset), "branch", andKeepOutAccess),
         );
-        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 46 - termIndex * 18, andToOrKeepOutAccess);
+        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 46 - termIndex * 18, {
+          ...andToOrKeepOutAccess,
+          signal: `${equation.name}:term-${termIndex + 1}`,
+        });
       }
     });
-    addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, orToTargetKeepOutAccess);
+    addWire(anchor(orNode, "right", 0), target.point, "gate-output", null, { ...orToTargetKeepOutAccess, signal: equation.name });
   };
 
   ffEquations.forEach((equation) => {
@@ -2018,6 +2077,8 @@ function buildCircuitGraph(analysis) {
     const laneY = node.y + node.h + 30;
     wires.push({
       kind: "clock",
+      signal: "CLK",
+      branchSignal: "CLK",
       branchPoint: { x: tapX, y: clockY },
       ...keepOutAccess(node.id),
       points: [
@@ -2029,33 +2090,25 @@ function buildCircuitGraph(analysis) {
     });
   });
 
-  const feedbackLaneStart = ffX + ffW + 64;
-  const feedbackLaneGap = 48;
+  const feedbackLaneStart = ffX + ffW + 72;
+  const feedbackLaneGap = 56;
   qNames.forEach((qName, index) => {
     const row = signalRows.get(qName);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
     if (!row || !ffNode) return;
     const start = anchor(ffNode, "right", 0);
-    const busEntry = { x: index === 0 ? row.x2 : row.x1, y: row.y };
-    const laneX = feedbackLaneStart + (qNames.length - 1 - index) * feedbackLaneGap;
-    const feedbackAccess = { ...keepOutAccess(ffNode.id), branchPoint: busEntry };
-
-    if (index === 0) {
-      addWire(start, busEntry, "feedback", laneX, feedbackAccess);
-      return;
-    }
-
-    const bottomLaneY = clockY + 36 + (index - 1) * 34;
-    const returnX = signalX1 - 34 - (index - 1) * 24;
+    const busEntry = { x: row.x2, y: row.y };
+    const laneX = feedbackLaneStart + index * feedbackLaneGap;
     wires.push({
       kind: "feedback",
-      ...feedbackAccess,
+      signal: qName,
+      branchSignal: qName,
+      ...keepOutAccess(ffNode.id),
+      branchPoint: busEntry,
       points: compactManhattanPoints([
         start,
         { x: laneX, y: start.y },
-        { x: laneX, y: bottomLaneY },
-        { x: returnX, y: bottomLaneY },
-        { x: returnX, y: busEntry.y },
+        { x: laneX, y: busEntry.y },
         busEntry,
       ]),
     });
@@ -2204,13 +2257,14 @@ function buildCircuitJunctions(wires, buses) {
   wires.forEach((wire) => {
     if (!wire.branchPoint || !hasRenderableWirePath(wire)) return;
     const point = wire.branchPoint;
-    if (!isFinitePoint(point) || !pointOnAnyBus(point, buses)) return;
+    const bus = findBusAtPoint(point, buses, wire.branchSignal || wire.signal);
+    if (!isFinitePoint(point) || !bus) return;
     if (!wireTouchesPoint(wire, point)) return;
 
-    const key = pointKey(point);
+    const key = `${bus.signal}:${pointKey(point)}`;
     if (seen.has(key)) return;
     seen.add(key);
-    junctions.push(point);
+    junctions.push({ ...point, signal: bus.signal });
   });
 
   return junctions;
@@ -2220,11 +2274,19 @@ function validateCircuitGraphConnections(nodes, wires, buses, junctions) {
   const issues = [];
 
   junctions.forEach((junction) => {
-    if (!pointOnAnyBus(junction, buses)) {
-      issues.push(`Junction ${pointKey(junction)} is not on a signal bus.`);
+    if (!findBusAtPoint(junction, buses, junction.signal)) {
+      issues.push(`Junction ${pointKey(junction)} is not on its ${junction.signal || "unknown"} signal bus.`);
     }
-    if (!wires.some((wire) => wire.branchPoint && pointsEqual(wire.branchPoint, junction) && wireTouchesPoint(wire, junction))) {
-      issues.push(`Junction ${pointKey(junction)} has no outgoing branch wire.`);
+    if (
+      !wires.some(
+        (wire) =>
+          wire.branchPoint &&
+          sameCircuitSignal(wire.branchSignal || wire.signal, junction.signal) &&
+          pointsEqual(wire.branchPoint, junction) &&
+          wireTouchesPoint(wire, junction),
+      )
+    ) {
+      issues.push(`Junction ${pointKey(junction)} has no outgoing ${junction.signal || "unknown"} branch wire.`);
     }
   });
 
@@ -2250,6 +2312,8 @@ function validateCircuitGraphConnections(nodes, wires, buses, junctions) {
     }
   });
 
+  issues.push(...validateSignalIsolation(wires, buses));
+
   return { issues };
 }
 
@@ -2263,6 +2327,78 @@ function shouldValidateInputPort(node, port) {
   return false;
 }
 
+function validateSignalIsolation(wires, buses) {
+  const issues = [];
+  const segments = [];
+
+  buses.forEach((bus) => {
+    if (!bus.signal) return;
+    segments.push({
+      signal: bus.signal,
+      label: `bus ${bus.signal}`,
+      a: { x: bus.x1, y: bus.y },
+      b: { x: bus.x2, y: bus.y },
+    });
+  });
+
+  wires.forEach((wire, wireIndex) => {
+    if (!wire.signal || !wire.points) return;
+    wire.points.forEach((point, pointIndex) => {
+      if (pointIndex === 0) return;
+      const previous = wire.points[pointIndex - 1];
+      if (pointsEqual(previous, point)) return;
+      segments.push({
+        signal: wire.signal,
+        label: `wire ${wireIndex}`,
+        a: previous,
+        b: point,
+      });
+    });
+  });
+
+  for (let i = 0; i < segments.length; i += 1) {
+    for (let j = i + 1; j < segments.length; j += 1) {
+      const first = segments[i];
+      const second = segments[j];
+      if (sameCircuitSignal(first.signal, second.signal)) continue;
+      if (!segmentsCoincidentlyOverlap(first, second)) continue;
+      issues.push(`${first.signal} and ${second.signal} overlap on ${first.label} / ${second.label}.`);
+      if (issues.length >= 12) return issues;
+    }
+  }
+
+  return issues;
+}
+
+function segmentsCoincidentlyOverlap(first, second) {
+  const firstHorizontal = Math.abs(first.a.y - first.b.y) <= 0.5;
+  const secondHorizontal = Math.abs(second.a.y - second.b.y) <= 0.5;
+  const firstVertical = Math.abs(first.a.x - first.b.x) <= 0.5;
+  const secondVertical = Math.abs(second.a.x - second.b.x) <= 0.5;
+
+  if (firstHorizontal && secondHorizontal && Math.abs(first.a.y - second.a.y) <= 0.5) {
+    return overlapLength(first.a.x, first.b.x, second.a.x, second.b.x) > 0.5;
+  }
+
+  if (firstVertical && secondVertical && Math.abs(first.a.x - second.a.x) <= 0.5) {
+    return overlapLength(first.a.y, first.b.y, second.a.y, second.b.y) > 0.5;
+  }
+
+  return false;
+}
+
+function overlapLength(aStart, aEnd, bStart, bEnd) {
+  return rangeOverlapLength(aStart, aEnd, bStart, bEnd);
+}
+
+function rangeOverlapLength(aStart, aEnd, bStart, bEnd) {
+  const minA = Math.min(aStart, aEnd);
+  const maxA = Math.max(aStart, aEnd);
+  const minB = Math.min(bStart, bEnd);
+  const maxB = Math.max(bStart, bEnd);
+  return Math.min(maxA, maxB) - Math.max(minA, minB);
+}
+
 function wireTouchesPoint(wire, point) {
   return (wire.points || []).some((wirePoint) => pointsEqual(wirePoint, point));
 }
@@ -2273,7 +2409,24 @@ function wireEndpointTouchesPoint(wire, point) {
 }
 
 function pointOnAnyBus(point, buses) {
-  return buses.some((bus) => Math.abs(point.y - bus.y) <= 0.5 && point.x >= bus.x1 - 0.5 && point.x <= bus.x2 + 0.5);
+  return Boolean(findBusAtPoint(point, buses));
+}
+
+function findBusAtPoint(point, buses, signal = null) {
+  if (!isFinitePoint(point)) return null;
+  return (
+    buses.find(
+      (bus) =>
+        (!signal || sameCircuitSignal(bus.signal, signal)) &&
+        Math.abs(point.y - bus.y) <= 0.5 &&
+        point.x >= bus.x1 - 0.5 &&
+        point.x <= bus.x2 + 0.5,
+    ) || null
+  );
+}
+
+function sameCircuitSignal(a, b) {
+  return Boolean(a && b && a === b);
 }
 
 function pointsEqual(a, b) {
@@ -2427,7 +2580,7 @@ function addOrGate(id, x, centerY, terms, addNode, inputSpacing = 88) {
 
 function drawCircuitBus(group, bus) {
   const klass = `wire bus-wire ${bus.kind || ""}`.trim();
-  group.append(svgEl("path", { class: klass, d: `M ${bus.x1} ${bus.y} L ${bus.x2} ${bus.y}` }));
+  group.append(svgEl("path", { class: klass, d: `M ${bus.x1} ${bus.y} L ${bus.x2} ${bus.y}`, "data-signal": bus.signal || "" }));
   group.append(svgEl("circle", { class: `source-terminal ${bus.kind || ""}`.trim(), cx: bus.x1, cy: bus.y, r: 4.5 }));
   drawBusLabel(group, bus);
 
@@ -2467,7 +2620,7 @@ function drawConstantSymbol(group, bus) {
 }
 
 function drawCircuitWire(group, wire) {
-  group.append(svgEl("path", { class: `wire ${wire.kind || ""}`.trim(), d: pointsToPath(wire.points) }));
+  group.append(svgEl("path", { class: `wire ${wire.kind || ""}`.trim(), d: pointsToPath(wire.points), "data-signal": wire.signal || "" }));
 }
 
 function drawCircuitNode(viewport, node) {
