@@ -2025,11 +2025,36 @@ function buildCircuitGraph(analysis) {
     });
   });
 
-  qNames.forEach((qName) => {
+  const feedbackLaneStart = ffX + ffW + 54;
+  const feedbackLaneGap = 38;
+  qNames.forEach((qName, index) => {
     const row = signalRows.get(qName);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
     if (!row || !ffNode) return;
-    addWire(anchor(ffNode, "right", 0), { x: row.x1, y: row.y }, "feedback", ffNode.x + ffNode.w + 70, keepOutAccess(ffNode.id));
+    const start = anchor(ffNode, "right", 0);
+    const busEntry = { x: index === 0 ? row.x2 : row.x1, y: row.y };
+    const laneX = feedbackLaneStart + (qNames.length - 1 - index) * feedbackLaneGap;
+    const feedbackAccess = { ...keepOutAccess(ffNode.id), branchPoint: busEntry };
+
+    if (index === 0) {
+      addWire(start, busEntry, "feedback", laneX, feedbackAccess);
+      return;
+    }
+
+    const bottomLaneY = clockY + 28 + (index - 1) * 24;
+    const returnX = signalX1 - 24 - (index - 1) * 18;
+    wires.push({
+      kind: "feedback",
+      ...feedbackAccess,
+      points: compactManhattanPoints([
+        start,
+        { x: laneX, y: start.y },
+        { x: laneX, y: bottomLaneY },
+        { x: returnX, y: bottomLaneY },
+        { x: returnX, y: busEntry.y },
+        busEntry,
+      ]),
+    });
   });
 
   const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or" || node.type === "ff").map(makeGateKeepOutZone);
