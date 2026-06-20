@@ -1687,6 +1687,7 @@ function renderCircuitDiagram(analysis) {
   const svg = els.circuitSvg;
   svg.innerHTML = "";
   svg.setAttribute("viewBox", `0 0 ${graph.width} ${graph.height}`);
+  svg.dataset.validationIssues = JSON.stringify(graph.validation?.issues || []);
 
   const defs = svgEl("defs");
   const marker = svgEl("marker", {
@@ -1743,25 +1744,38 @@ function buildCircuitGraph(analysis) {
   const buses = [];
   const signalRows = new Map();
   const tapCounts = new Map();
-  const wireLaneReservations = [];
-  const signalX1 = 140;
-  const signalX2 = 650;
-  const signalTop = 74;
-  const busLaneGap = 48;
-  const verticalWireGap = 36;
-  const tapWrapOffset = 14;
+  let ffInputBypassCount = 0;
+  const verticalLaneReservations = [];
+  const horizontalLaneReservations = [];
+  const laneOrderByFamily = { main: 0, inverted: 0, constant: 0 };
+  const inputX = 80;
+  const busX = 160;
+  const notGateX = 280;
+  const andGateX = 480;
+  const orGateX = 650;
+  const flipFlopX = 820;
+  const outputX = 1100;
+  const signalX1 = busX;
+  const signalX2 = andGateX - 24;
+  const signalTop = 90;
+  const busLaneGap = 56;
+  const verticalWireGap = 28;
+  const horizontalWireGap = 32;
+  const tapWrapOffset = 16;
   const signalSpacing = busLaneGap;
   const branchGap = verticalWireGap;
-  const notX = signalX1 + 220;
+  const notX = notGateX;
   const notW = 44;
   const notH = 28;
   const invertedSignalX1 = notX + notW + 68;
   let signalRowIndex = 0;
 
-  const reserveVerticalWireLane = (signal, preferredX, startY, endY, options = {}) => {
-    const laneGap = options.gap || 18;
+  const allocateVerticalLane = (signal, preferredX, startY, endY, options = {}) => {
+    const laneGap = options.gap || verticalWireGap;
     const minX = options.minX ?? signalX1 + 54;
     const maxX = options.maxX ?? signalX2 - Math.max(18, verticalWireGap / 2);
+    const laneMinX = Math.min(minX, maxX);
+    const laneMaxX = Math.max(minX, maxX);
     const minY = Math.min(startY, endY);
     const maxY = Math.max(startY, endY);
     const candidates = [];
@@ -1777,7 +1791,7 @@ function buildCircuitGraph(analysis) {
 
     const seenCandidates = new Set();
     const normalizedCandidates = candidates
-      .map((candidate) => Math.max(minX, Math.min(maxX, candidate)))
+      .map((candidate) => Math.max(laneMinX, Math.min(laneMaxX, candidate)))
       .filter((candidate) => {
         const key = Math.round(candidate * 10) / 10;
         if (seenCandidates.has(key)) return false;
@@ -1786,7 +1800,7 @@ function buildCircuitGraph(analysis) {
       });
 
     const laneConflicts = (candidate) =>
-      wireLaneReservations.some(
+      verticalLaneReservations.some(
         (reservation) =>
           !sameCircuitSignal(reservation.signal, signal) &&
           Math.abs(reservation.x - candidate) < laneGap &&
@@ -1794,22 +1808,81 @@ function buildCircuitGraph(analysis) {
       );
 
     const laneX = normalizedCandidates.find((candidate) => !laneConflicts(candidate)) ?? normalizedCandidates[0] ?? preferredX;
-    wireLaneReservations.push({ signal, x: laneX, minY, maxY });
+    verticalLaneReservations.push({ signal, x: laneX, minY, maxY });
     return laneX;
+  };
+
+  const allocateHorizontalLane = (signal, preferredY, startX, endX, options = {}) => {
+    const laneGap = options.gap || horizontalWireGap;
+    const minYLimit = options.minY ?? signalTop;
+    const maxYLimit = options.maxY ?? preferredY + laneGap * 8;
+    const minX = Math.min(startX, endX);
+    const maxX = Math.max(startX, endX);
+    const candidates = [];
+
+    for (let offset = 0; offset <= 8; offset += 1) {
+      if (offset === 0) {
+        candidates.push(preferredY);
+      } else {
+        candidates.push(preferredY + offset * laneGap);
+        candidates.push(preferredY - offset * laneGap);
+      }
+    }
+
+    const seenCandidates = new Set();
+    const normalizedCandidates = candidates
+      .map((candidate) => Math.max(minYLimit, Math.min(maxYLimit, candidate)))
+      .filter((candidate) => {
+        const key = Math.round(candidate * 10) / 10;
+        if (seenCandidates.has(key)) return false;
+        seenCandidates.add(key);
+        return true;
+      });
+
+    const laneConflicts = (candidate) =>
+      horizontalLaneReservations.some(
+        (reservation) =>
+          !sameCircuitSignal(reservation.signal, signal) &&
+          Math.abs(reservation.y - candidate) < laneGap &&
+          rangeOverlapLength(reservation.minX, reservation.maxX, minX, maxX) > 0.5,
+      );
+
+    const laneY = normalizedCandidates.find((candidate) => !laneConflicts(candidate)) ?? normalizedCandidates[0] ?? preferredY;
+    horizontalLaneReservations.push({ signal, y: laneY, minX, maxX });
+    return laneY;
+  };
+
+  const routeManhattanWire = (start, end, options = {}) => {
+    const signal = options.signal || options.kind || "wire";
+    if (Number.isFinite(options.laneY)) {
+      const laneY = allocateHorizontalLane(signal, options.laneY, start.x, end.x, options.horizontalLane || {});
+      return compactManhattanPoints([start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end]);
+    }
+
+    const preferredLaneX = Number.isFinite(options.laneX) ? options.laneX : start.x + Math.max(verticalWireGap, (end.x - start.x) / 2);
+    const laneX = Number.isFinite(options.laneX)
+      ? options.laneX
+      : allocateVerticalLane(signal, preferredLaneX, start.y, end.y, options.verticalLane || {});
+    return compactManhattanPoints([start, { x: laneX, y: start.y }, { x: laneX, y: end.y }, end]);
   };
 
   const addSignalRow = (signal, label, kind = "signal", x1 = signalX1) => {
     const rowIndex = signalRowIndex;
     const labelGap = kind === "inverted" ? 44 : 38;
+    const laneFamily = kind === "inverted" ? "inverted" : kind === "constant" ? "constant" : "main";
+    const laneOrder = laneOrderByFamily[laneFamily] || 0;
+    laneOrderByFamily[laneFamily] = laneOrder + 1;
     const row = {
       signal,
       label,
       kind,
+      laneFamily,
+      laneOrder,
       x1,
       x2: signalX2,
       y: signalTop + rowIndex * signalSpacing,
-      labelX: x1 - labelGap,
-      branchStart: (kind === "inverted" ? x1 + 54 : Math.max(x1 + 84, notX + notW + 76)) + (rowIndex % 4) * (verticalWireGap / 2),
+      labelX: kind === "inverted" ? x1 - labelGap : inputX,
+      branchStart: (kind === "inverted" ? x1 + 42 : Math.max(x1 + 72, notX + notW + 54)) + (rowIndex % 5) * 9,
       branchGap,
       rowIndex,
     };
@@ -1817,6 +1890,17 @@ function buildCircuitGraph(analysis) {
     buses.push(row);
     signalRowIndex += 1;
     return row;
+  };
+
+  const primaryLaneForRow = (row) => {
+    const tapMargin = Math.max(18, verticalWireGap / 2);
+    if (row.kind === "inverted") {
+      return Math.min(row.x2, row.x1 + 8 + row.laneOrder * verticalWireGap);
+    }
+    if (row.kind === "constant") {
+      return Math.min(row.x2 - tapMargin, row.x1 + 72 + row.laneOrder * verticalWireGap);
+    }
+    return Math.min(notX - verticalWireGap, row.x1 + 36 + row.laneOrder * verticalWireGap);
   };
 
   analysis.inputVariables.forEach((name) => {
@@ -1838,11 +1922,11 @@ function buildCircuitGraph(analysis) {
   if (needsVcc) addSignalRow("1", "VCC", "constant");
   if (needsGnd) addSignalRow("0", "GND", "constant");
 
-  const ffX = 1060;
-  const ffW = 185;
+  const ffX = flipFlopX;
+  const ffW = 170;
   const ffH = 110;
-  const ffGap = 72;
-  const ffStartY = Math.max(210, signalTop + signalRowIndex * signalSpacing + 74);
+  const ffGap = 84;
+  const ffStartY = Math.max(260, signalTop + signalRowIndex * signalSpacing + 96);
   const ffNodes = qNames.map((qName, index) => {
     const inputLabels = getFlipFlopInputLabels(analysis.ffType, qName.slice(1));
     const ports = [
@@ -1871,7 +1955,7 @@ function buildCircuitGraph(analysis) {
     type: "output",
     title: `Output ${outputBusLabel(analysis.outputVariables)}`,
     subtitle: "Circuit response",
-    x: 1415,
+    x: outputX,
     y: outputNodeY,
     w: 130,
     h: outputNodeHeight,
@@ -1899,16 +1983,17 @@ function buildCircuitGraph(analysis) {
     nodes.push(node);
     const inputPoint = anchor(node, "left", 0);
     const outputPoint = anchor(node, "right", 0);
-    const preferredTapX = node.x - 60 - (baseRow.rowIndex % 3) * (verticalWireGap / 2);
-    const tapX = reserveVerticalWireLane(baseRow.signal, preferredTapX, baseRow.y, inputPoint.y, {
-      minX: signalX1 + 54,
-      maxX: notX - 18,
-      gap: 18,
+    const preferredTapX = primaryLaneForRow(baseRow);
+    const tapX = allocateVerticalLane(baseRow.signal, preferredTapX, baseRow.y, inputPoint.y, {
+      minX: baseRow.x1 + 36,
+      maxX: notX - verticalWireGap,
+      gap: verticalWireGap,
     });
     wires.push({
       kind: "branch",
       signal: baseRow.signal,
       branchSignal: baseRow.signal,
+      allowKeepOutIds: [node.id],
       branchPoint: { x: tapX, y: baseRow.y },
       points: [
         { x: tapX, y: baseRow.y },
@@ -1919,6 +2004,7 @@ function buildCircuitGraph(analysis) {
     wires.push({
       kind: "branch",
       signal: row.signal,
+      allowKeepOutIds: [node.id],
       points: [outputPoint, { x: row.x1, y: row.y }],
     });
   });
@@ -1926,42 +2012,64 @@ function buildCircuitGraph(analysis) {
   const connectSignalToPoint = (signal, end, kind = "branch", options = {}) => {
     const row = signalRows.get(signal);
     if (!row) return;
+    const { routeBelowLogic = false, ...wireOptions } = options;
     const count = tapCounts.get(signal) || 0;
     const tapMargin = Math.max(18, verticalWireGap / 2);
-    const available = Math.max(1, Math.floor((row.x2 - row.branchStart - tapMargin) / row.branchGap));
-    const wrap = Math.floor(count / available);
-    const preferredTapX = Math.min(row.x2 - tapMargin, row.branchStart + (count % available) * row.branchGap + wrap * tapWrapOffset);
-    const tapX = reserveVerticalWireLane(signal, preferredTapX, row.y, end.y, {
-      minX: row.x1 + 54,
-      maxX: row.x2 - tapMargin,
-      gap: 18,
+    const preferredTapX = primaryLaneForRow(row) + Math.floor(count / 6) * tapWrapOffset;
+    const branchLaneMinX = row.kind === "inverted" ? row.x1 : row.x1 + 36;
+    const branchLaneMaxX = row.kind === "inverted" ? row.x2 : notX - verticalWireGap;
+    const tapX = allocateVerticalLane(signal, preferredTapX, row.y, end.y, {
+      minX: branchLaneMinX,
+      maxX: branchLaneMaxX,
+      gap: verticalWireGap,
     });
     tapCounts.set(signal, count + 1);
+    const branchStartPoint = { x: tapX, y: row.y };
+    const targetIsFlipFlopInput = ffNodes.some(
+      (node) => Math.abs(end.x - node.x) <= 0.5 && end.y >= node.y - horizontalWireGap && end.y <= node.y + node.h + horizontalWireGap,
+    );
+    const shouldRouteBelow = routeBelowLogic || targetIsFlipFlopInput;
+    let routeBelowApproachX = null;
+    const routePoints = shouldRouteBelow
+      ? (() => {
+        const ffBottom = Math.max(...ffNodes.map((node) => node.y + node.h));
+        const logicNodes = nodes.filter((node) => node.type === "and" || node.type === "or" || node.type === "not");
+        const logicBottom = logicNodes.length ? Math.max(...logicNodes.map((node) => node.y + node.h + 20)) : ffBottom;
+        const belowOutputY = outputNode.y + outputNode.h + 24;
+        const preferredBypassY = Math.max(end.y + 64, ffBottom + 36, logicBottom + horizontalWireGap, belowOutputY);
+        const bypassY = allocateHorizontalLane(signal, preferredBypassY, tapX, end.x, {
+          minY: Math.max(end.y + horizontalWireGap, logicBottom + 12, belowOutputY),
+          maxY: belowOutputY + horizontalWireGap * 5,
+          gap: horizontalWireGap,
+        });
+        const approachPreferredX = ffX - 78 + (ffInputBypassCount % 2) * 56;
+        ffInputBypassCount += 1;
+        routeBelowApproachX = allocateVerticalLane(signal, approachPreferredX, bypassY, end.y, {
+          minX: ffX - 78,
+          maxX: ffX - 22,
+          gap: verticalWireGap,
+        });
+        return [branchStartPoint, { x: tapX, y: bypassY }, { x: routeBelowApproachX, y: bypassY }, { x: routeBelowApproachX, y: end.y }, end];
+      })()
+      : [branchStartPoint, { x: tapX, y: end.y }, end];
     wires.push({
       kind,
       signal,
       branchSignal: signal,
-      branchPoint: { x: tapX, y: row.y },
-      ...options,
-      points: compactManhattanPoints([
-        { x: tapX, y: row.y },
-        { x: tapX, y: end.y },
-        end,
-      ]),
+      branchPoint: branchStartPoint,
+      routeBelowLogic: shouldRouteBelow,
+      routeBelowY: routePoints.length > 3 ? routePoints[1].y : null,
+      routeBelowApproachX,
+      ...wireOptions,
+      points: compactManhattanPoints(routePoints),
     });
   };
 
   const addWire = (start, end, kind = "branch", laneX = null, options = {}) => {
-    const midX = laneX ?? start.x + Math.max(44, (end.x - start.x) / 2);
     wires.push({
       kind,
       ...options,
-      points: [
-        start,
-        { x: midX, y: start.y },
-        { x: midX, y: end.y },
-        end,
-      ],
+      points: routeManhattanWire(start, end, { ...options, kind, laneX, verticalLane: { minX: andGateX + 70, maxX: ffX - 36, gap: verticalWireGap } }),
     });
   };
 
@@ -1982,6 +2090,11 @@ function buildCircuitGraph(analysis) {
     parsedEquations,
     ffStartY - 36,
   );
+  const ffLogicBottom = Math.max(
+    ...Array.from(ffEquationLayouts.values(), (layout) => layout.centerY + layout.height / 2),
+    ffStartY + ffNodes.length * (ffH + ffGap),
+  );
+  outputNode.y = Math.max(outputNode.y, ffLogicBottom + 128);
   const outputEquationLayouts = layoutEquationGroups(
     outputEquations,
     (equation) => anchor(outputNode, "left", getNodePortOffset(nodes, outputNode.id, equation.name)).y,
@@ -2007,7 +2120,10 @@ function buildCircuitGraph(analysis) {
         return;
       }
       if (term.length === 1) {
-        connectSignalToPoint(term[0].signal, target.point, "branch", keepOutAccess(targetAccessId));
+        connectSignalToPoint(term[0].signal, target.point, "branch", {
+          ...keepOutAccess(targetAccessId),
+          routeBelowLogic: Boolean(targetAccessId),
+        });
         return;
       }
 
@@ -2039,7 +2155,7 @@ function buildCircuitGraph(analysis) {
         term.forEach((literal, literalIndex) =>
           connectSignalToPoint(literal.signal, anchor(andNode, "left", andNode.ports[literalIndex].offset), "branch", andKeepOutAccess),
         );
-        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 46 - termIndex * 18, {
+        addWire(anchor(andNode, "right", 0), orInput, "gate-output", area.orX - 56 - termIndex * verticalWireGap, {
           ...andToOrKeepOutAccess,
           signal: `${equation.name}:term-${termIndex + 1}`,
         });
@@ -2056,7 +2172,7 @@ function buildCircuitGraph(analysis) {
       keepOutId: ffNode.id,
     };
     const layout = ffEquationLayouts.get(equation.name);
-    buildEquationNetwork(equation, target, { andX: 690, orX: 865, centerY: layout.centerY, termPitch: layout.termPitch });
+    buildEquationNetwork(equation, target, { andX: andGateX, orX: orGateX, centerY: layout.centerY, termPitch: layout.termPitch });
   });
 
   outputEquations.forEach((equation) => {
@@ -2064,17 +2180,23 @@ function buildCircuitGraph(analysis) {
       point: anchor(outputNode, "left", getNodePortOffset(nodes, outputNode.id, equation.name)),
     };
     const layout = outputEquationLayouts.get(equation.name);
-    buildEquationNetwork(equation, target, { andX: 1080, orX: 1245, centerY: layout.centerY, termPitch: layout.termPitch });
+    buildEquationNetwork(equation, target, { andX: andGateX, orX: orGateX, centerY: layout.centerY, termPitch: layout.termPitch });
   });
 
-  const clockBusX2 = ffX - 42;
   const lastFfBottom = Math.max(...ffNodes.map((node) => node.y + node.h));
-  const clockY = lastFfBottom + 64;
+  const diagramBodyBottom = Math.max(lastFfBottom, outputNode.y + outputNode.h);
+  const clockTapStartX = ffX + ffW + 36;
+  const clockBusX2 = clockTapStartX + (ffNodes.length - 1) * verticalWireGap + 28;
+  const clockY = diagramBodyBottom + 320;
   buses.push({ signal: "CLK", label: "CLK", kind: "clock", x1: signalX1, x2: clockBusX2, y: clockY });
   ffNodes.forEach((node, index) => {
     const clockPoint = anchor(node, "bottom", 0);
-    const tapX = ffX - 62 - index * 30;
-    const laneY = node.y + node.h + 30;
+    const tapX = clockTapStartX + index * verticalWireGap;
+    const laneY = allocateHorizontalLane("CLK", node.y + node.h + 36, tapX, clockPoint.x, {
+      minY: node.y + node.h + 28,
+      maxY: clockY - horizontalWireGap,
+      gap: horizontalWireGap,
+    });
     wires.push({
       kind: "clock",
       signal: "CLK",
@@ -2090,8 +2212,8 @@ function buildCircuitGraph(analysis) {
     });
   });
 
-  const feedbackLaneStart = ffX + ffW + 72;
-  const feedbackLaneGap = 56;
+  const feedbackLaneStart = ffX + ffW + 64;
+  const feedbackLaneGap = 72;
   qNames.forEach((qName, index) => {
     const row = signalRows.get(qName);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
@@ -2114,12 +2236,10 @@ function buildCircuitGraph(analysis) {
     });
   });
 
-  const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or" || node.type === "ff").map(makeGateKeepOutZone);
-  const routedWires = wires
-    .map((wire, index) => sanitizeCircuitWire({ ...wire, points: routeWireAroundKeepOuts(wire, gateKeepOutZones, index) }))
-    .filter(hasRenderableWirePath);
+  const gateKeepOutZones = nodes.filter((node) => node.type === "and" || node.type === "or" || node.type === "not" || node.type === "ff").map(makeGateKeepOutZone);
+  const routedWires = assignWireLanes(wires, gateKeepOutZones);
   const junctions = buildCircuitJunctions(routedWires, buses);
-  const validation = validateCircuitGraphConnections(nodes, routedWires, buses, junctions);
+  const validation = validateCircuitGraphConnections(nodes, routedWires, buses, junctions, gateKeepOutZones);
   if (validation.issues.length) {
     console.warn("Circuit diagram connection validation", validation.issues);
   }
@@ -2133,15 +2253,22 @@ function buildCircuitGraph(analysis) {
 }
 
 function makeGateKeepOutZone(node) {
-  const marginX = node.type === "ff" ? 12 : node.type === "and" ? 16 : 26;
-  const marginY = node.type === "ff" ? 12 : node.type === "and" ? 16 : 24;
+  const marginX = node.type === "ff" ? 18 : 20;
+  const marginY = node.type === "ff" ? 18 : 20;
   return {
     id: node.id,
+    type: node.type,
     x: node.x - marginX,
     y: node.y - marginY,
     w: node.w + marginX * 2,
     h: node.h + marginY * 2,
   };
+}
+
+function assignWireLanes(wires, keepOutZones) {
+  return wires
+    .map((wire, index) => sanitizeCircuitWire({ ...wire, points: routeWireAroundKeepOuts(wire, keepOutZones, index) }))
+    .filter(hasRenderableWirePath);
 }
 
 function routeWireAroundKeepOuts(wire, keepOutZones, wireIndex) {
@@ -2182,18 +2309,35 @@ function routeWireAroundZone(points, zone, wireIndex, wire = {}) {
   const start = points[0];
   const end = points[points.length - 1];
   const leftToRight = start.x <= end.x;
-  const stagger = wireIndex % 4;
-  const sideStagger = wireIndex % 2;
-  const beforeX = leftToRight ? zone.x - 24 - sideStagger * 10 : zone.x + zone.w + 24 + sideStagger * 10;
-  const afterX = leftToRight ? zone.x + zone.w + 24 + sideStagger * 10 : zone.x - 24 - sideStagger * 10;
+  const stagger = wireIndex % 5;
+  const sideStagger = wireIndex % 3;
+  const sideGap = 28;
+  const beforeX = leftToRight ? zone.x - sideGap - sideStagger * 28 : zone.x + zone.w + sideGap + sideStagger * 28;
+  const afterX = leftToRight ? zone.x + zone.w + sideGap + sideStagger * 28 : zone.x - sideGap - sideStagger * 28;
   const averageY = (start.y + end.y) / 2;
   const zoneCenterY = zone.y + zone.h / 2;
   const preferAbove = Math.abs(averageY - zoneCenterY) < 8 ? wireIndex % 2 === 0 : averageY < zoneCenterY;
-  const laneOffset = 34 + stagger * 14;
+  const laneOffset = 44 + stagger * 32;
   const laneY = preferAbove ? zone.y - laneOffset : zone.y + zone.h + laneOffset;
 
   if (wire.branchPoint && pointsEqual(start, wire.branchPoint)) {
-    const exitX = leftToRight ? zone.x + zone.w + 24 + sideStagger * 10 : zone.x - 24 - sideStagger * 10;
+    if (wire.routeBelowLogic) {
+      const fallbackLaneY = zone.y + zone.h + 56 + (wireIndex % 4) * 32;
+      const laneY = Math.max(Number.isFinite(wire.routeBelowY) ? wire.routeBelowY : fallbackLaneY, fallbackLaneY);
+      const approachX = Number.isFinite(wire.routeBelowApproachX) ? wire.routeBelowApproachX : end.x;
+      return compactManhattanPoints([
+        start,
+        { x: start.x, y: laneY },
+        { x: approachX, y: laneY },
+        { x: approachX, y: end.y },
+        end,
+      ]);
+    }
+
+    const branchSideGap = sideGap + signalLaneIndex(wire.signal || wire.kind) * 28;
+    const exitX = leftToRight
+      ? Math.min(start.x, zone.x - branchSideGap)
+      : Math.max(start.x, zone.x + zone.w + branchSideGap);
     return compactManhattanPoints([
       start,
       { x: start.x, y: laneY },
@@ -2270,7 +2414,7 @@ function buildCircuitJunctions(wires, buses) {
   return junctions;
 }
 
-function validateCircuitGraphConnections(nodes, wires, buses, junctions) {
+function validateCircuitGraphConnections(nodes, wires, buses, junctions, keepOutZones = []) {
   const issues = [];
 
   junctions.forEach((junction) => {
@@ -2313,6 +2457,8 @@ function validateCircuitGraphConnections(nodes, wires, buses, junctions) {
   });
 
   issues.push(...validateSignalIsolation(wires, buses));
+  issues.push(...validateWireSpacing(wires, buses));
+  issues.push(...validateKeepOutViolations(wires, keepOutZones));
 
   return { issues };
 }
@@ -2368,6 +2514,89 @@ function validateSignalIsolation(wires, buses) {
   }
 
   return issues;
+}
+
+function validateWireSpacing(wires, buses) {
+  const issues = [];
+  const minWireDistance = 24;
+  const segments = collectSignalSegments(wires, buses);
+
+  for (let i = 0; i < segments.length; i += 1) {
+    for (let j = i + 1; j < segments.length; j += 1) {
+      const first = segments[i];
+      const second = segments[j];
+      if (sameCircuitSignal(first.signal, second.signal)) continue;
+      const distance = parallelSegmentDistance(first, second);
+      if (!Number.isFinite(distance) || distance >= minWireDistance || distance <= 0.5) continue;
+      issues.push(`${first.signal} and ${second.signal} are only ${Math.round(distance)}px apart near ${first.label} / ${second.label}.`);
+      if (issues.length >= 12) return issues;
+    }
+  }
+
+  return issues;
+}
+
+function validateKeepOutViolations(wires, keepOutZones) {
+  const issues = [];
+
+  wires.forEach((wire, wireIndex) => {
+    const allowedIds = new Set(wire.allowKeepOutIds || []);
+    keepOutZones.forEach((zone) => {
+      if (allowedIds.has(zone.id)) return;
+      if (!wireIntersectsKeepOut(wire.points || [], zone)) return;
+      issues.push(`${wire.signal || wire.kind || `wire ${wireIndex}`} crosses ${zone.id} keep-out.`);
+    });
+  });
+
+  return issues.slice(0, 16);
+}
+
+function collectSignalSegments(wires, buses) {
+  const segments = [];
+
+  buses.forEach((bus) => {
+    if (!bus.signal) return;
+    segments.push({
+      signal: bus.signal,
+      label: `bus ${bus.signal}`,
+      a: { x: bus.x1, y: bus.y },
+      b: { x: bus.x2, y: bus.y },
+    });
+  });
+
+  wires.forEach((wire, wireIndex) => {
+    if (!wire.signal || !wire.points) return;
+    wire.points.forEach((point, pointIndex) => {
+      if (pointIndex === 0) return;
+      const previous = wire.points[pointIndex - 1];
+      if (pointsEqual(previous, point)) return;
+      segments.push({
+        signal: wire.signal,
+        label: `wire ${wireIndex}`,
+        a: previous,
+        b: point,
+      });
+    });
+  });
+
+  return segments;
+}
+
+function parallelSegmentDistance(first, second) {
+  const firstHorizontal = Math.abs(first.a.y - first.b.y) <= 0.5;
+  const secondHorizontal = Math.abs(second.a.y - second.b.y) <= 0.5;
+  const firstVertical = Math.abs(first.a.x - first.b.x) <= 0.5;
+  const secondVertical = Math.abs(second.a.x - second.b.x) <= 0.5;
+
+  if (firstHorizontal && secondHorizontal && rangeOverlapLength(first.a.x, first.b.x, second.a.x, second.b.x) > 0.5) {
+    return Math.abs(first.a.y - second.a.y);
+  }
+
+  if (firstVertical && secondVertical && rangeOverlapLength(first.a.y, first.b.y, second.a.y, second.b.y) > 0.5) {
+    return Math.abs(first.a.x - second.a.x);
+  }
+
+  return Number.POSITIVE_INFINITY;
 }
 
 function segmentsCoincidentlyOverlap(first, second) {
@@ -2427,6 +2656,11 @@ function findBusAtPoint(point, buses, signal = null) {
 
 function sameCircuitSignal(a, b) {
   return Boolean(a && b && a === b);
+}
+
+function signalLaneIndex(signal) {
+  const text = String(signal || "wire");
+  return [...text].reduce((total, char, index) => total + char.charCodeAt(0) * (index + 1), 0) % 6;
 }
 
 function pointsEqual(a, b) {
@@ -2497,7 +2731,7 @@ function parseProductTerm(term, signalNames) {
 }
 
 function estimateAndGateHeight(term) {
-  return Math.max(66, term.length * 26 + 24);
+  return Math.max(72, term.length * 28 + 28);
 }
 
 function estimateEquationTermPitch(parsed) {
@@ -2620,7 +2854,13 @@ function drawConstantSymbol(group, bus) {
 }
 
 function drawCircuitWire(group, wire) {
-  group.append(svgEl("path", { class: `wire ${wire.kind || ""}`.trim(), d: pointsToPath(wire.points), "data-signal": wire.signal || "" }));
+  group.append(
+    svgEl("path", {
+      class: `wire ${wire.kind || ""}`.trim(),
+      d: pointsToPath(wire.points),
+      "data-signal": wire.signal || "",
+    }),
+  );
 }
 
 function drawCircuitNode(viewport, node) {
@@ -2715,12 +2955,12 @@ function getNodePortOffset(nodes, nodeId, label) {
 }
 
 function logicBlockHeight(inputCount) {
-  const pinSpacing = 26;
+  const pinSpacing = 28;
   const minBlockHeight = 90;
   return Math.max(minBlockHeight, Math.max(inputCount, 1) * pinSpacing + 40);
 }
 
-function makeSidePorts(labels, side, nodeHeight, pinSpacing = 26) {
+function makeSidePorts(labels, side, nodeHeight, pinSpacing = 28) {
   const yValues = pinRows(nodeHeight, labels.length, pinSpacing);
   return labels.map((label, index) => ({
     side,
@@ -2729,7 +2969,7 @@ function makeSidePorts(labels, side, nodeHeight, pinSpacing = 26) {
   }));
 }
 
-function pinRows(nodeHeight, count, pinSpacing = 26) {
+function pinRows(nodeHeight, count, pinSpacing = 28) {
   if (count <= 0) return [];
   if (count === 1) return [nodeHeight / 2];
 
