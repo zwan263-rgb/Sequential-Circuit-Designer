@@ -1747,7 +1747,7 @@ function buildCircuitGraph(analysis) {
   let ffInputBypassCount = 0;
   const verticalLaneReservations = [];
   const horizontalLaneReservations = [];
-  const laneOrderByFamily = { main: 0, inverted: 0, constant: 0 };
+  const laneOrderByFamily = { input: 0, feedback: 0, inverted: 0, constant: 0 };
   const inputX = 80;
   const busX = 160;
   const notGateX = 280;
@@ -1869,7 +1869,7 @@ function buildCircuitGraph(analysis) {
   const addSignalRow = (signal, label, kind = "signal", x1 = signalX1) => {
     const rowIndex = signalRowIndex;
     const labelGap = kind === "inverted" ? 44 : 38;
-    const laneFamily = kind === "inverted" ? "inverted" : kind === "constant" ? "constant" : "main";
+    const laneFamily = kind === "inverted" ? "inverted" : kind === "constant" ? "constant" : kind.startsWith("feedback") ? "feedback" : "input";
     const laneOrder = laneOrderByFamily[laneFamily] || 0;
     laneOrderByFamily[laneFamily] = laneOrder + 1;
     const row = {
@@ -1900,6 +1900,10 @@ function buildCircuitGraph(analysis) {
     if (row.kind === "constant") {
       return Math.min(row.x2 - tapMargin, row.x1 + 72 + row.laneOrder * verticalWireGap);
     }
+    if (row.kind.startsWith("feedback")) {
+      const feedbackLaneXs = [notX + notW + 24, notX + notW + 48, notX + notW + 104, notX + notW + 132];
+      return Math.min(row.x2, feedbackLaneXs[row.laneOrder] ?? notX + notW + 132);
+    }
     return Math.min(notX - verticalWireGap, row.x1 + 36 + row.laneOrder * verticalWireGap);
   };
 
@@ -1909,13 +1913,10 @@ function buildCircuitGraph(analysis) {
 
   qNames.forEach((name) => {
     addSignalRow(name, name, "feedback");
+    addSignalRow(`${name}'`, `${name}'`, "feedback-complement");
   });
 
   analysis.inputVariables.forEach((name) => {
-    if (invertedSignals.has(name)) addSignalRow(`${name}'`, `${name}'`, "inverted", invertedSignalX1);
-  });
-
-  qNames.forEach((name) => {
     if (invertedSignals.has(name)) addSignalRow(`${name}'`, `${name}'`, "inverted", invertedSignalX1);
   });
 
@@ -1932,7 +1933,7 @@ function buildCircuitGraph(analysis) {
     const ports = [
       ...makeSidePorts(inputLabels, "left", ffH),
       { side: "bottom", offset: 0, label: "CLK" },
-      { side: "right", offset: 0, label: qName },
+      ...makeSidePorts([qName, `${qName}'`], "right", ffH),
     ];
     return {
       id: `ff-${qName}`,
@@ -2016,12 +2017,13 @@ function buildCircuitGraph(analysis) {
     const count = tapCounts.get(signal) || 0;
     const tapMargin = Math.max(18, verticalWireGap / 2);
     const preferredTapX = primaryLaneForRow(row) + Math.floor(count / 6) * tapWrapOffset;
-    const branchLaneMinX = row.kind === "inverted" ? row.x1 : row.x1 + 36;
-    const branchLaneMaxX = row.kind === "inverted" ? row.x2 : notX - verticalWireGap;
+    const branchLaneMinX = row.kind === "inverted" ? row.x1 : row.kind.startsWith("feedback") ? notX + notW + 24 : row.x1 + 36;
+    const branchLaneMaxX = row.kind === "inverted" || row.kind.startsWith("feedback") ? row.x2 : notX - verticalWireGap;
+    const branchLaneGap = row.kind.startsWith("feedback") ? 24 : verticalWireGap;
     const tapX = allocateVerticalLane(signal, preferredTapX, row.y, end.y, {
       minX: branchLaneMinX,
       maxX: branchLaneMaxX,
-      gap: verticalWireGap,
+      gap: branchLaneGap,
     });
     tapCounts.set(signal, count + 1);
     const branchStartPoint = { x: tapX, y: row.y };
@@ -2214,17 +2216,19 @@ function buildCircuitGraph(analysis) {
 
   const feedbackLaneStart = ffX + ffW + 64;
   const feedbackLaneGap = 72;
-  qNames.forEach((qName, index) => {
-    const row = signalRows.get(qName);
+  const feedbackOutputSignals = qNames.flatMap((qName) => [qName, `${qName}'`]);
+  feedbackOutputSignals.forEach((signal, index) => {
+    const row = signalRows.get(signal);
+    const qName = literalBase(signal);
     const ffNode = nodes.find((node) => node.id === `ff-${qName}`);
     if (!row || !ffNode) return;
-    const start = anchor(ffNode, "right", 0);
+    const start = anchor(ffNode, "right", getNodePortOffset(nodes, ffNode.id, signal));
     const busEntry = { x: row.x2, y: row.y };
     const laneX = feedbackLaneStart + index * feedbackLaneGap;
     wires.push({
       kind: "feedback",
-      signal: qName,
-      branchSignal: qName,
+      signal,
+      branchSignal: signal,
       ...keepOutAccess(ffNode.id),
       branchPoint: busEntry,
       points: compactManhattanPoints([
