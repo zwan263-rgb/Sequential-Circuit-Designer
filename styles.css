@@ -736,6 +736,10 @@ h2 {
   stroke: var(--amber);
 }
 
+.wave-line.ff-input {
+  stroke: var(--accent);
+}
+
 .wave-edge {
   stroke: var(--line-strong);
   stroke-dasharray: 5 5;

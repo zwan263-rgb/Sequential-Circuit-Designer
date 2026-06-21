@@ -1428,7 +1428,7 @@ function simulateTimingTrace(analysis, initialState, xSequence) {
     const presentBits = analysis.stateMap.get(currentState);
     const nextBits = analysis.stateMap.get(nextState);
     const output = outputForTransition(row, inputCombo, analysis.modelType);
-    const ffInputs = getTraceFlipFlopInputs(analysis.ffType, presentBits, nextBits, analysis.stateBits);
+    const ffInputs = getTraceFlipFlopInputs(analysis, presentBits, nextBits, inputCombo);
 
     trace.push({
       cycle: `C${cycle + 1}`,
@@ -1448,26 +1448,66 @@ function simulateTimingTrace(analysis, initialState, xSequence) {
   return trace;
 }
 
-function getTraceFlipFlopInputs(ffType, presentBits, nextBits, stateBits) {
+function getTraceFlipFlopInputs(analysis, presentBits, nextBits, inputCombo) {
+  const assignments = makeTraceAssignments(analysis, presentBits, inputCombo);
+  const equationValues = analysis.equations
+    .filter((equation) => equation.role === "ff")
+    .map((equation) => ({
+      name: equation.name,
+      value: evaluateSopExpression(equation.expression, assignments, equation.vars),
+    }));
+
+  if (equationValues.length) {
+    return equationValues;
+  }
+
   const values = [];
-  stateVarNames(stateBits).forEach((qName, bit) => {
+  stateVarNames(analysis.stateBits).forEach((qName, bit) => {
     const qIndex = qName.slice(1);
     const q = presentBits[bit];
     const qNext = nextBits[bit];
 
-    if (ffType === "jk") {
+    if (analysis.ffType === "jk") {
       const jk = jkExcitation(q, qNext);
       values.push({ name: `J${qIndex}`, value: jk.j }, { name: `K${qIndex}`, value: jk.k });
-    } else if (ffType === "t") {
+    } else if (analysis.ffType === "t") {
       values.push({ name: `T${qIndex}`, value: q === qNext ? "0" : "1" });
-    } else if (ffType === "d") {
+    } else if (analysis.ffType === "d") {
       values.push({ name: `D${qIndex}`, value: qNext });
-    } else if (ffType === "sr") {
+    } else if (analysis.ffType === "sr") {
       const sr = srExcitation(q, qNext);
       values.push({ name: `S${qIndex}`, value: sr.s }, { name: `R${qIndex}`, value: sr.r });
     }
   });
   return values;
+}
+
+function makeTraceAssignments(analysis, presentBits, inputCombo) {
+  const assignments = {};
+  stateVarNames(analysis.stateBits).forEach((name, index) => {
+    assignments[name] = presentBits[index] ?? "0";
+  });
+  analysis.inputVariables.forEach((name, index) => {
+    assignments[name] = inputCombo[index] ?? "0";
+  });
+  return assignments;
+}
+
+function evaluateSopExpression(expression, assignments, vars) {
+  const parsed = parseSopExpression(expression, vars);
+  if (parsed.constant === "1") return "1";
+  if (parsed.constant === "0") return "0";
+  if (!parsed.terms.length) return "0";
+
+  return parsed.terms.some((term) => {
+    if (!term.length) return true;
+    return term.every((literal) => {
+      const value = assignments[literal.base] ?? "0";
+      return literal.inverted ? value !== "1" : value === "1";
+    });
+  })
+    ? "1"
+    : "0";
 }
 
 function jkExcitation(q, qNext) {
@@ -1568,6 +1608,12 @@ function renderTimingDiagram(trace, analysis) {
     values: trace.map((step) => step.inputCombo[index]),
     kind: "input",
   }));
+  const ffInputNames = trace[0]?.ffInputs.map((input) => input.name) || getTraceInputNames(analysis.ffType, analysis.stateBits);
+  const ffInputSignals = ffInputNames.map((name) => ({
+    name,
+    values: trace.map((step) => step.ffInputs.find((input) => input.name === name)?.value ?? "0"),
+    kind: "ff-input",
+  }));
   const initialMooreOutput = mooreOutputForState(analysis, trace[0].presentState);
   const outputSignals = analysis.outputVariables.map((name, index) => {
     if (analysis.modelType === "moore") {
@@ -1586,6 +1632,7 @@ function renderTimingDiagram(trace, analysis) {
   const signals = [
     { name: "CLK", values: [], kind: "clock" },
     ...inputSignals,
+    ...ffInputSignals,
     ...qNames.map((qName, index) => ({
       name: qName,
       values: [trace[0].presentBits[index], ...trace.map((step) => step.nextBits[index])],
@@ -1622,6 +1669,8 @@ function renderTimingDiagram(trace, analysis) {
       svg.append(svgEl("path", { class: "wave-line clock", d: clockWavePath(left, baseY, trace.length, cycleWidth, amplitude) }));
     } else if (signal.kind === "state") {
       svg.append(svgEl("path", { class: "wave-line", d: delayedStepWavePath(signal.values, left, baseY, trace.length, cycleWidth, amplitude, propagationDelay, endX) }));
+    } else if (signal.kind === "ff-input") {
+      svg.append(svgEl("path", { class: "wave-line ff-input", d: mealyOutputWavePath(signal.values, trace, left, baseY, trace.length, cycleWidth, amplitude, propagationDelay, combinationalDelay, endX) }));
     } else if (signal.kind === "moore-output") {
       svg.append(svgEl("path", { class: "wave-line", d: delayedStepWavePath(signal.values, left, baseY, trace.length, cycleWidth, amplitude, propagationDelay + combinationalDelay, endX) }));
     } else if (signal.kind === "mealy-output") {
