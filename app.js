@@ -13,6 +13,8 @@ const els = {
   outputVariablesInput: document.querySelector("#outputVariablesInput"),
   stateTableHead: document.querySelector("#stateTableHead"),
   tableBody: document.querySelector("#stateTableBody"),
+  addRowButton: document.querySelector("#addRowButton"),
+  removeRowButton: document.querySelector("#removeRowButton"),
   clearButton: document.querySelector("#clearTableButton"),
   loadButton: document.querySelector("#loadExampleButton"),
   descriptionInput: document.querySelector("#descriptionInput"),
@@ -259,6 +261,32 @@ function loadExample() {
   refreshInitialStateOptions();
   resetOutput();
   setStatus("Example loaded. Click Generate to analyze it.", "ready");
+}
+
+function addStateTableRow() {
+  collectTableInput();
+  tableRows.push(createEmptyRow());
+  renderTable();
+  refreshInitialStateOptions();
+  resetOutput();
+
+  const firstInput = els.tableBody.querySelector(`input[data-row="${tableRows.length - 1}"][data-field="present"]`);
+  firstInput?.focus();
+  setStatus("Added a blank state-table row.", "ready");
+}
+
+function removeStateTableRow() {
+  collectTableInput();
+  if (tableRows.length <= 1) {
+    setStatus("At least one state-table row is required.", "error");
+    return;
+  }
+
+  tableRows.pop();
+  renderTable();
+  refreshInitialStateOptions();
+  resetOutput();
+  setStatus("Removed the last state-table row.", "ready");
 }
 
 function clearTable() {
@@ -3149,6 +3177,8 @@ document.querySelectorAll('input[name="modelType"]').forEach((radio) => {
     resetOutput();
   });
 });
+els.addRowButton.addEventListener("click", addStateTableRow);
+els.removeRowButton.addEventListener("click", removeStateTableRow);
 els.clearButton.addEventListener("click", clearTable);
 els.loadButton.addEventListener("click", loadExample);
 els.parseDescriptionButton.addEventListener("click", parseDescriptionToStateTable);

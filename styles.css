@@ -259,6 +259,7 @@ h2 {
 
 .table-actions {
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .simulation-grid {

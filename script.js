@@ -1,6 +1,7 @@
 ﻿function addRow() {
 
     let table = document.getElementById("stateTable");
+    if (!table) return;
 
     let row = table.insertRow();
 
@@ -8,7 +9,18 @@
     row.insertCell(1).innerHTML = "<input>";
     row.insertCell(2).innerHTML = "<input>";
     row.insertCell(3).innerHTML = "<input>";
-} function generate() {
+    row.insertCell(4).innerHTML = "<input>";
+}
+
+function removeRow() {
+
+    let table = document.getElementById("stateTable");
+    if (!table || table.rows.length <= 2) return;
+
+    table.deleteRow(table.rows.length - 1);
+}
+
+function generate() {
 
     let table = document.getElementById("stateTable");
 

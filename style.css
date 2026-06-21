@@ -66,3 +66,9 @@ button {
     button:hover {
         background: #3452dd;
     }
+
+.table-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
