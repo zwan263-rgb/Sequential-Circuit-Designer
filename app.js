@@ -1920,7 +1920,7 @@ function buildCircuitGraph(analysis) {
     if (invertedSignals.has(name)) addSignalRow(`${name}'`, `${name}'`, "inverted", invertedSignalX1);
   });
 
-  if (needsVcc) addSignalRow("1", "VCC", "constant");
+  if (needsVcc) addSignalRow("1", "", "constant");
   if (needsGnd) addSignalRow("0", "GND", "constant");
 
   const ffX = flipFlopX;
@@ -2820,7 +2820,9 @@ function drawCircuitBus(group, bus) {
   const klass = `wire bus-wire ${bus.kind || ""}`.trim();
   group.append(svgEl("path", { class: klass, d: `M ${bus.x1} ${bus.y} L ${bus.x2} ${bus.y}`, "data-signal": bus.signal || "" }));
   group.append(svgEl("circle", { class: `source-terminal ${bus.kind || ""}`.trim(), cx: bus.x1, cy: bus.y, r: 4.5 }));
-  drawBusLabel(group, bus);
+  if (bus.label) {
+    drawBusLabel(group, bus);
+  }
 
   if (bus.kind === "constant") {
     drawConstantSymbol(group, bus);
@@ -2848,9 +2850,7 @@ function drawBusLabel(group, bus) {
 }
 
 function drawConstantSymbol(group, bus) {
-  if (bus.label === "VCC") {
-    group.append(svgEl("path", { class: "constant-symbol", d: `M ${bus.x1 - 38} ${bus.y - 11} L ${bus.x1 - 30} ${bus.y - 23} L ${bus.x1 - 22} ${bus.y - 11}` }));
-  } else if (bus.label === "GND") {
+  if (bus.label === "GND") {
     group.append(svgEl("line", { class: "constant-symbol", x1: bus.x1 - 42, y1: bus.y + 10, x2: bus.x1 - 18, y2: bus.y + 10 }));
     group.append(svgEl("line", { class: "constant-symbol", x1: bus.x1 - 38, y1: bus.y + 16, x2: bus.x1 - 22, y2: bus.y + 16 }));
     group.append(svgEl("line", { class: "constant-symbol", x1: bus.x1 - 34, y1: bus.y + 22, x2: bus.x1 - 26, y2: bus.y + 22 }));
