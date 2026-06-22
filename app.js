@@ -885,8 +885,8 @@ function renderKMap(equation) {
 
   const grid = document.createElement("div");
   grid.className = "kmap-grid";
-  grid.style.gridTemplateColumns = `repeat(${map.cols.length + 1}, minmax(58px, 1fr))`;
-  grid.append(makeKMapCell(`${map.rowLabel}\\${map.colLabel}`, "label"));
+  grid.style.gridTemplateColumns = `minmax(50px, 0.62fr) repeat(${map.cols.length}, minmax(58px, 1fr))`;
+  grid.append(makeKMapCell("", "corner"));
 
   map.cols.forEach((col) => grid.append(makeKMapCell(col.label, "label")));
 
@@ -902,7 +902,14 @@ function renderKMap(equation) {
     });
   });
 
-  els.kmapPanel.append(grid);
+  const layout = document.createElement("div");
+  layout.className = "kmap-layout";
+  const columnAxis = makeKMapAxisLabel("Columns", map.colVars);
+  columnAxis.classList.add("kmap-column-axis");
+  const rowAxis = makeKMapAxisLabel("Rows", map.rowVars);
+  rowAxis.classList.add("kmap-row-axis");
+  layout.append(columnAxis, rowAxis, grid);
+  els.kmapPanel.append(layout);
 
   const groupList = document.createElement("div");
   groupList.className = "group-list";
@@ -927,6 +934,8 @@ function buildKMapLayout(vars) {
     return {
       rowLabel: "",
       colLabel: vars[0],
+      rowVars: [],
+      colVars: [vars[0]],
       rows: [{ label: "", bits: "" }],
       cols: [
         { label: "0", bits: "0" },
@@ -939,6 +948,8 @@ function buildKMapLayout(vars) {
     return {
       rowLabel: vars[0],
       colLabel: vars[1],
+      rowVars: [vars[0]],
+      colVars: [vars[1]],
       rows: [
         { label: "0", bits: "0" },
         { label: "1", bits: "1" },
@@ -957,6 +968,8 @@ function buildKMapLayout(vars) {
   return {
     rowLabel: vars[0],
     colLabel: `${vars[1]}${vars[2]}`,
+    rowVars: [vars[0]],
+    colVars: [vars[1], vars[2]],
     rows: [
       { label: "0", bits: "0" },
       { label: "1", bits: "1" },
@@ -974,6 +987,8 @@ function buildFourVariableKMapLayout(vars) {
   return {
     rowLabel: `${vars[0]}${vars[1]}`,
     colLabel: `${vars[2]}${vars[3]}`,
+    rowVars: [vars[0], vars[1]],
+    colVars: [vars[2], vars[3]],
     rows: [
       { label: "00", bits: "00" },
       { label: "01", bits: "01" },
@@ -987,6 +1002,17 @@ function buildFourVariableKMapLayout(vars) {
       { label: "10", bits: "10" },
     ],
   };
+}
+
+function makeKMapAxisLabel(prefix, vars) {
+  const label = document.createElement("div");
+  label.className = "kmap-axis-label";
+  const prefixEl = document.createElement("span");
+  prefixEl.textContent = `${prefix}:`;
+  const varsEl = document.createElement("strong");
+  varsEl.textContent = vars.length ? vars.join(" ") : "-";
+  label.append(prefixEl, varsEl);
+  return label;
 }
 
 function makeKMapCell(text, className) {
